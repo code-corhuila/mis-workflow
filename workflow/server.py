@@ -100,6 +100,12 @@ def create_app(runner=None, tokens=None):
             raise invalid("body")
         return (await run_in_threadpool(request.app.state.runner.resume, claims["sub"], claims["roles"], saga_id)).resource()
 
+    @app.post("/api/v1/sagas/{saga_id}/compensate")
+    async def compensate(saga_id: str, request: Request, claims=Depends(identity)):
+        if await body(request, empty=True) != {}:
+            raise invalid("body")
+        return (await run_in_threadpool(request.app.state.runner.compensate, claims["sub"], claims["roles"], saga_id)).resource()
+
     return app
 
 

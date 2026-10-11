@@ -65,8 +65,9 @@ class Participants:
             if self.failure and self.failure[0] == step:
                 raise StepError(self.failure[1], self.failure[2])
             if key not in self.responses:
-                status = dict(zip(STEPS, ("PENDING", "PENDING", "CONFIRMED", "ACTIVE")))[step]
-                result_id = saga.receipt_id if step == "confirm-receipt" else saga.entry_id if step == "activate-entry" else str(uuid4())
+                statuses = {**dict(zip(STEPS, ("PENDING", "PENDING", "CONFIRMED", "ACTIVE"))), "cancel-entry": "CANCELLED", "void-receipt": "VOIDED"}
+                status = statuses[step]
+                result_id = saga.receipt_id if step in {"confirm-receipt", "void-receipt"} else saga.entry_id if step in {"activate-entry", "cancel-entry"} else str(uuid4())
                 self.responses[key] = {"id": result_id, "status": status}
                 self.effects.append(step)
             if self.lost == step:
@@ -132,9 +133,9 @@ class CoreTest(unittest.TestCase):
     def test_permanent_failure_is_not_retried_or_exposed(self):
         self.participants.failure = ("prepare-entry", "LOT_EXPIRED", False)
         saga, _ = self.start()
-        self.assertEqual("FAILED", saga.status)
+        self.assertEqual("COMPENSATED", saga.status)
         self.runner.resume(self.actor, self.roles, saga.id)
-        self.assertEqual(2, len(self.participants.calls))
+        self.assertEqual(3, len(self.participants.calls))
         self.assertNotIn("LOT_EXPIRED", str(saga.resource()))
 
     def test_lost_activation_response_replays_without_duplicate_effect(self):

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from threading import Thread
@@ -114,8 +115,8 @@ class HttpParticipantsTests(unittest.TestCase):
             with self.subTest(status=status):
                 self.calls.clear()
                 self.reply(status, {"secret": "never expose upstream body"})
-                code = "SERVICE_IDENTITY_REJECTED" if status in (401, 403) else "INVALID_PARTICIPANT_RESPONSE" if status == 302 else "UPSTREAM_REJECTED"
-                self.error(code, status in (401, 403, 302))
+                code = "SERVICE_IDENTITY_REJECTED" if status in (401, 403) else "UPSTREAM_CONFLICT" if status == 409 else "INVALID_PARTICIPANT_RESPONSE" if status == 302 else "UPSTREAM_REJECTED"
+                self.error(code, status in (401, 403, 409, 302))
                 self.assertEqual(1, len(self.calls))
         self.assertEqual([], self.waits)
 
@@ -173,3 +174,16 @@ class HttpParticipantsTests(unittest.TestCase):
         for timeout in (0, -1, 3):
             with self.assertRaises(ValueError):
                 HttpParticipants(self.url, self.url, timeout=timeout)
+
+    def test_compensation_routes_send_empty_body_and_stable_keys(self):
+        saga = replace(self.saga, receipt_id=str(uuid4()), entry_id=str(uuid4()))
+        for step, path, value, status in (
+            ("cancel-entry", "/api/v1/entries/", saga.entry_id, "CANCELLED"),
+            ("void-receipt", "/api/v1/receipts/", saga.receipt_id, "VOIDED")):
+            expected = {"id": value, "status": status}
+            self.reply(200, expected)
+            self.assertEqual(expected, self.forward(step, saga))
+            call = self.calls[-1]
+            self.assertEqual(path + value + ("/cancel" if step == "cancel-entry" else "/void"), call[0])
+            self.assertEqual({}, call[2])
+            self.assertEqual(saga.id + ":" + step, call[1]["Idempotency-Key"])

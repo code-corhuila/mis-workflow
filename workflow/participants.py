@@ -50,6 +50,11 @@ class HttpParticipants:
             participant = identifier(value, "participantId")
             route = "/api/v1/receipts/" + participant + "/confirm" if step == "confirm-receipt" else "/api/v1/entries/" + participant + "/activate"
             return (self.suppliers if step == "confirm-receipt" else self.inventory) + route, {}
+        if step in {"cancel-entry", "void-receipt"}:
+            value = saga.entry_id if step == "cancel-entry" else saga.receipt_id
+            participant = identifier(value, "participantId")
+            route = "/api/v1/entries/" + participant + "/cancel" if step == "cancel-entry" else "/api/v1/receipts/" + participant + "/void"
+            return (self.inventory if step == "cancel-entry" else self.suppliers) + route, {}
         raise ValueError("Unsupported workflow step")
 
     def forward(self, step, saga, key, service_token):
@@ -88,6 +93,8 @@ class HttpParticipants:
                 error.close()
                 if status in {401, 403}:
                     raise StepError("SERVICE_IDENTITY_REJECTED", True) from None
+                if status == 409:
+                    raise StepError("UPSTREAM_CONFLICT", True) from None
                 retryable = status == 429 or 500 <= status <= 599
                 if not retryable:
                     # Never persist upstream error bodies or confidential endpoint details.

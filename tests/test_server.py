@@ -143,6 +143,24 @@ class ServerTests(unittest.TestCase):
         with patch.object(self.runner, "service_token", side_effect=StepError("PRIVATE_IDENTITY_DETAIL", True)):
             self.assertError(self.client.get("/health"), 503, "SERVICE_IDENTITY_UNAVAILABLE")
 
+    def test_compensation_failure_requires_admin_endpoint_not_resume(self):
+        self.participants.failure = ("prepare-entry", "UPSTREAM_REJECTED", False)
+        self.participants.lost = "void-receipt"
+        created = self.start()
+        self.assertEqual("FAILED", created.json()["status"])
+        location = created.headers["Location"]
+        self.assertEqual("FAILED", self.client.post(location + "/resume", headers=self.headers("ADMIN")).json()["status"])
+        for role in ("INVENTORY", "SUPERVISOR", "CONSULTATION"):
+            self.assertError(self.client.post(location + "/compensate", headers=self.headers(role)), 403, "FORBIDDEN")
+        self.assertError(self.client.post(location + "/compensate", json={"unexpected": True}, headers=self.headers("ADMIN")), 400, "VALIDATION_ERROR")
+        compensated = self.client.post(location + "/compensate", json={}, headers=self.headers("ADMIN"))
+        self.assertEqual("COMPENSATED", compensated.json()["status"])
+        self.assertEqual(["void-receipt"], compensated.json()["compensatedSteps"])
+        self.assertEqual(1, self.participants.effects.count("void-receipt"))
+        calls = len(self.participants.calls)
+        self.assertEqual(compensated.json(), self.client.post(location + "/compensate", headers=self.headers("ADMIN")).json())
+        self.assertEqual(calls, len(self.participants.calls))
+
     def test_jwks_public_key_is_fetched_and_signature_verified(self):
         document = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(self.private.public_key()))
         document.update(kid="server-test-key", use="sig", alg="RS256")

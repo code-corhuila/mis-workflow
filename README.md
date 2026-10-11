@@ -30,9 +30,9 @@ Avance 2026-10-11: contrato OpenAPI y nucleo Python 3.12 independiente del frame
 
 ADMIN e INVENTORY inician; INVENTORY solo consulta/reanuda propias; SUPERVISOR consulta todas, sin escribir; ADMIN administra todas. El adaptador HTTP verifica RS256 mediante JWKS de Seguridad; rechaza JWT de servicio como identidad humana de entrada.
 
-El alcance inicial es un proveedor, medicamento y lote por recepcion, sin lineas multiples. Respuestas contienen UUID, estado, pasos completados y failedStep; no credenciales ni detalle interno. El nucleo detiene fallos transitorios sin compensar a ciegas; un rechazo definitivo queda FAILED y no se reintenta automaticamente. Compensacion y recuperacion de fallos definitivos corresponden a HU-WFL-002, aun pendiente.
+El alcance es un proveedor, medicamento y lote por recepcion. Respuestas contienen UUID, estado, progreso de avance/compensacion y failedStep, sin credenciales ni detalle interno. Fallos transitorios/conflictos inciertos quedan RUNNING; rechazos definitivos compensan recursos preparados. HU-WFL-002 guarda cada accion y deja FAILED si una compensacion falla, para decision administrativa.
 
-Contrato en docs/openapi.yaml. El almacenamiento se registra en docs/ADR-001-saga-storage.md: esquema y usuario propios en PostgreSQL existente, sin nuevo motor ni escritura en datos de otros dominios. Servidor, participantes, migracion y despliegue integrados y verificados en dev. Falta publicar componentes de dominio pendientes, promover a QA y acreditar el cierre formal. HU-WFL-002 implementara compensacion; este avance no la incluye.
+Contrato en docs/openapi.yaml y decisiones en docs/ADR-001-saga-storage.md y docs/ADR-002-compensacion.md. Esquema/usuario propios en PostgreSQL existente. Recepcion y compensacion integradas y verificadas en dev; falta publicar dominios pendientes, promover a QA y acreditar cierre formal.
 
 ## Pruebas y publicacion
 
@@ -131,8 +131,18 @@ Desde mis-infra-postgres, en PowerShell 7:
 .\tests\Test-Workflow.ps1 -VerifyRecovery -Python python
 ```
 
-Start genera configuracion propia si falta, conserva password y subject existentes y renueva JWT con la clave de Seguridad. El operador debe poder leer esa clave, que nunca se copia ni monta en workflow. Renovacion manual, sin scheduler: token maximo una hora, renovar antes del vencimiento. Al vencer /health devuelve 503 y nuevas sagas quedan RUNNING sin actuar; renovar y usar resume, no cambiar subject. La carpeta montada por ambiente solo contiene public.pem/service.jwt; reemplazo atomico del JWT se ve sin reiniciar el contenedor.
+Start genera configuracion propia si falta, conserva password y subject y delega la emision al script de mis-security. Registrar primero la identidad con scripts/Issue-WorkflowServiceToken.ps1 -Environment dev -Register desde Seguridad; ver su docs/workflow-service-identity.md. La clave privada nunca se copia ni monta en workflow. Renovacion local manual, sin scheduler ni endpoint remoto: token maximo una hora. Al vencer /health devuelve 503 y nuevas sagas quedan RUNNING sin actuar; renovar y usar resume, no cambiar subject. La carpeta montada solo contiene public.pem/service.jwt; el reemplazo atomico se ve sin reiniciar el contenedor.
 
 Test-Workflow crea datos sinteticos y, con VerifyRecovery, interrumpe/restaura solo Inventario dev; no ejecutar simultaneamente con otras pruebas o usuarios. Requiere dependencias de tests/requirements-contract.txt de mis-infra-postgres. Valida OpenAPI sobre respuestas reales, recibo CONFIRMED, entrada ACTIVE, stock, un movimiento, replay, reinicio, recuperacion y JWT renovado. Configuraciones QA/main comprobadas sin arrancar esos ambientes; sus seis combinaciones de identidad cruzada fueron rechazadas.
 
 Publicacion actual: docs/HU-WFL-001-integracion.md y ../mis-infra-postgres/docs/HU-WFL-001-integracion-publicacion.md. No versionar env/*.env ni secrets/. Cierre formal pendiente de publicacion de dominios, QA y promocion segun politica del curso.
+
+## Compensacion - HU-WFL-002
+
+Ante rechazo definitivo se guarda fase de compensacion antes de ejecutar RPC. Orden por recurso preparado: cancel-entry, luego void-receipt (o solo void si no hubo entrada). Preparacion/confirmacion del recibo comparten una anulacion. Inventario debe aceptar cancelacion antes de anular; una entrada ACTIVE detiene la compensacion sin revertir stock ni recibo confirmado. No borrar documentos ni movimientos.
+
+Cada accion usa sagaId:accion y SERVICE_TOKEN estable; progreso y errores privados se guardan en esquema v2 con 002-compensation.sql, sin editar 001-sagas.sql. Una caida en fase RUNNING se reanuda sin pasos de avance. Un fallo de compensacion queda FAILED: resume solo consulta; POST /api/v1/sagas/{id}/compensate requiere ADMIN y {} o cuerpo ausente para reintentar acciones pendientes. COMPENSATED es replay sin efectos; COMPLETED, RUNNING e historicos FAILED sin fase conocida rechazan 409 y requieren reconciliacion, nunca compensar resultados inciertos.
+
+La migracion conserva registros v1 y credenciales, no ofrece downgrade automatico. Respaldar saga y participantes antes de promocion; un contenedor antiguo no debe volver sobre esquema v2 sin plan. Respuesta agrega compensatedSteps; failedStep identifica el fallo de avance o compensacion sin exponer codigo privado. Contrato y frontend deben aceptar estos campos.
+
+Verificacion local: 69 pruebas correctas con PostgreSQL desechable y 14 de gateway. El workflow CI reproduce las pruebas aisladas; no reproduce el sistema multirrepositorio. Aceptacion real dev via tests/Test-Compensation.ps1 de mis-infra-postgres usa proxy SOLO de prueba, conserva datos sinteticos y limpia sus contenedores. Prueba anular tras rechazo, perder respuesta despues de efecto, recuperacion administrativa, reinicio y proteccion de entrada activa. Publicacion dividida: ../mis-infra-postgres/docs/HU-WFL-002-publicacion.md. QA y cierre formal pendientes.

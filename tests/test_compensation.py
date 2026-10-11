@@ -83,10 +83,45 @@ class CompensationTests(unittest.TestCase):
         self.assertEqual(1, self.participants.effects.count("cancel-entry"))
 
     def test_active_entry_guard_never_voids_confirmed_receipt(self):
-        saga = self.failed_undo("cancel-entry")
+        original = self.participants.forward
+        state = {"receipt": "PENDING", "entry": "PENDING", "stock": 0, "movements": ()}
+
+        def forward(step, saga, key, token):
+            if step == "cancel-entry" and state["entry"] == "ACTIVE":
+                self.participants.calls.append((step, key, token, saga.trace))
+                raise StepError("ENTRY_ACTIVE", False)
+            result = original(step, saga, key, token)
+            if step == "confirm-receipt":
+                # Synthetic participant anomaly: the entry is already irreversible when rejection arrives.
+                state.update(receipt="CONFIRMED", entry="ACTIVE", stock=saga.request.quantity,
+                             movements=(("ENTRY", saga.entry_id, saga.request.quantity),))
+                raise StepError("UPSTREAM_REJECTED", False)
+            if step == "void-receipt":
+                state["receipt"] = "VOIDED"
+            if step == "cancel-entry":
+                state["entry"] = "CANCELLED"
+            return result
+
+        self.participants.forward = forward
+        saga = self.start()
+        before = dict(state)
+        self.assertEqual({"receipt": "CONFIRMED", "entry": "ACTIVE", "stock": 10,
+                          "movements": (("ENTRY", saga.entry_id, 10),)}, before)
         self.assertEqual("FAILED", saga.status)
         self.assertEqual("cancel-entry", saga.resource()["failedStep"])
-        self.assertNotIn("void-receipt", self.participants.effects)
+        self.assertEqual((), saga.compensated)
+        count = len(self.participants.calls)
+        self.runner.resume(self.actor, {"ADMIN"}, saga.id)
+        self.assertEqual(count, len(self.participants.calls))
+        recovered = self.runner.compensate(str(uuid4()), {"ADMIN"}, saga.id)
+        self.assertEqual(("FAILED", "cancel-entry", ()),
+                         (recovered.status, recovered.resource()["failedStep"], recovered.compensated))
+        self.assertEqual(before, state)
+        self.assertNotIn("void-receipt", [call[0] for call in self.participants.calls])
+        self.assertNotIn("activate-entry", [call[0] for call in self.participants.calls])
+        cancels = [call for call in self.participants.calls if call[0] == "cancel-entry"]
+        self.assertEqual(2, len(cancels))
+        self.assertEqual(cancels[0][1:], cancels[1][1:])
 
     def test_lost_undo_response_is_recovered_with_same_key_and_single_effect(self):
         self.participants.lost = "void-receipt"

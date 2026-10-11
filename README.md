@@ -28,11 +28,11 @@ Full policy: `00-governance/branching-policy.md` in `mis-docs`.
 
 Avance 2026-10-11: contrato OpenAPI y nucleo Python 3.12 independiente del framework. Preparar recepcion, preparar entrada, confirmar recepcion y activar entrada, en ese orden. Cada paso recibe SERVICE_TOKEN y una clave sagaId:paso, conserva correlacion y guarda progreso mediante el puerto Store. Replay del inicio devuelve la misma saga sin ejecutar pasos; resume continua explicitamente.
 
-ADMIN e INVENTORY inician; INVENTORY solo consulta/reanuda propias; SUPERVISOR consulta todas, sin escribir; ADMIN administra todas. La firma RS256 se verificara en el adaptador HTTP, todavia pendiente: estas comprobaciones de roles no sustituyen autenticacion JWT.
+ADMIN e INVENTORY inician; INVENTORY solo consulta/reanuda propias; SUPERVISOR consulta todas, sin escribir; ADMIN administra todas. El adaptador HTTP verifica RS256 mediante JWKS de Seguridad; rechaza JWT de servicio como identidad humana de entrada.
 
 El alcance inicial es un proveedor, medicamento y lote por recepcion, sin lineas multiples. Respuestas contienen UUID, estado, pasos completados y failedStep; no credenciales ni detalle interno. El nucleo detiene fallos transitorios sin compensar a ciegas; un rechazo definitivo queda FAILED y no se reintenta automaticamente. Compensacion y recuperacion de fallos definitivos corresponden a HU-WFL-002, aun pendiente.
 
-Contrato en docs/openapi.yaml. El almacenamiento se registra en docs/ADR-001-saga-storage.md: esquema y usuario propios en PostgreSQL existente, sin nuevo motor ni escritura en datos de otros dominios. El adaptador PostgreSQL y el cliente HTTP ya estan implementados; las recepciones MongoDB se implementaron localmente en Proveedores. Siguen pendientes despliegue, provision y renovacion operativa de identidad de servicio, servidor, Compose y rutas de saga del gateway. Este avance no levanta un servicio ejecutable ni cierra la HU.
+Contrato en docs/openapi.yaml. El almacenamiento se registra en docs/ADR-001-saga-storage.md: esquema y usuario propios en PostgreSQL existente, sin nuevo motor ni escritura en datos de otros dominios. Servidor, adaptador PostgreSQL y cliente HTTP implementados; recepciones MongoDB disponibles localmente en Proveedores. Siguen pendientes despliegue por ambiente, provision y renovacion operativa de identidad de servicio, Compose y rutas de saga del gateway. Este avance no cierra la HU.
 
 ## Pruebas y publicacion
 
@@ -98,3 +98,22 @@ workflow/service_identity.py lee en cada paso un archivo SERVICE_TOKEN y verific
 No versionar service.jwt ni claves. Ubicarlos bajo secrets/ ignorado por Git; el montaje y el emisor por ambiente se integraran en el siguiente avance. Las pruebas generan claves sinteticas en carpetas temporales y usan servidores HTTP controlados, no datos reales.
 
 Guia del PR actual: docs/HU-WFL-001-http-publicacion.md. La suite Docker aislada verifica tambien persistencia; la prueba sin PostgreSQL omite sus ocho casos de forma explicita.
+
+## Servidor de HU-WFL-001
+
+workflow/server.py conecta los adaptadores sin ejecutar migraciones al arrancar. Endpoints: POST /api/v1/sagas/receive-supplies, GET /api/v1/sagas/{id}, POST /api/v1/sagas/{id}/resume. Inicio nuevo 201 con Location, repeticion 200 sin pasos; GET no ejecuta acciones. Solo humanos autenticados por RS256/issuer/audience/JWKS pueden entrar. Headers de roles no conceden permisos. La identidad saliente procede del archivo SERVICE_TOKEN, nunca del JWT humano.
+
+El middleware limita cuerpo a 64 KiB y lectura a quince segundos, rechaza headers criticos duplicados y valida/genera correlacion. Errores conservan error/message/traceId y details por campo; no incluyen excepciones, passwords ni cuerpos remotos. /health verifica esquema y credencial de servicio vigente; no demuestra salud de todos los participantes.
+
+Configuracion obligatoria en .env.example: password de workflow_app y base/host, rutas de JWT y clave publica montados externamente, subject estable, kid y URLs internas. El ejemplo no contiene secretos y no basta para levantar dev/qa/main: faltan bootstrap, trabajo de migracion y montajes del siguiente avance. El servicio debe usar workflow_app, nunca el usuario administrativo. No cargar una clave privada en el contenedor.
+
+Con PostgreSQL migrado y variables ya exportadas en un entorno de prueba autorizado:
+
+```powershell
+python -m pip install -r workflow/requirements.txt
+python -m uvicorn workflow.server:app --host 127.0.0.1 --port 8089 --no-access-log
+```
+
+Contenedor no root: docker build -f deploy/Dockerfile -t mis-workflow-server-check . La imagen no contiene db/, tests/ ni credenciales; migraciones se ejecutan por despliegue, no por el servidor. No publicar su puerto directamente en la composicion final: el acceso sera por gateway.
+
+Pruebas: usar la red desechable del README. Incluyen Uvicorn real, JWT distintos humano/servicio, PostgreSQL real y reinicio del proceso. Participantes HTTP son controlados: no demuestra aun recepcion real ni stock de Inventario. Sin WORKFLOW_TEST_DSN se omiten tambien la prueba de runtime y las ocho de persistencia. Guia del PR actual: docs/HU-WFL-001-server-publicacion.md.

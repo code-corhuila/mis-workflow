@@ -2,14 +2,14 @@ openapi: 3.1.0
 info:
   title: MediStock - Recepcion integrada
   version: 2.0.0
-  description: 'HU-WFL-001 integrada y verificada con APIs reales en dev: recepcion confirmada, entrada activa y un movimiento. QA/main requieren promocion y validacion; compensacion pertenece a HU-WFL-002.'
+  description: 'Recepcion integrada con compensacion persistente HU-WFL-002: entradas pendientes se cancelan antes de anular recibos. Stock activado no se revierte; fallos inciertos se reanudan, no se compensan a ciegas.'
 servers: [{url: 'http://127.0.0.1:8088'}]
 security: [{bearerAuth: []}]
 paths:
   /api/v1/sagas/receive-supplies:
     post:
       operationId: startReception
-      description: 'ADMIN o INVENTORY. Una recepcion, proveedor, medicamento y lote por saga. Preparar recibo, preparar entrada, confirmar recibo y activar entrada en ese orden. Replay solo consulta la misma saga, sin reejecutar pasos. La fecha se valida estructuralmente; el vencimiento y las referencias los validan los participantes. Un rechazo de negocio queda registrado como FAILED; no equivale a compensacion.'
+      description: 'ADMIN o INVENTORY. Preparar recibo, preparar entrada, confirmar recibo y activar entrada. Replay solo consulta la saga sin pasos. Rechazos definitivos inician compensacion guardada por recurso: cancelar entrada pendiente, luego anular recibo. Compensacion completa queda COMPENSATED; si falla, FAILED requiere decision administrativa. Tiempo de espera, identidad y conflictos inciertos no disparan compensacion.'
       parameters: [{name: Idempotency-Key, in: header, required: true, schema: {type: string, pattern: '^[A-Za-z0-9._:-]{8,128}$'}}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Reception'}}}}
       responses:
@@ -29,7 +29,14 @@ paths:
     parameters: [{$ref: '#/components/parameters/Id'}]
     post:
       operationId: resumeReceptionSaga
-      description: 'ADMIN o INVENTORY propietaria. RUNNING continua desde el primer paso no guardado con la misma clave derivada; nunca compensa por timeout. COMPLETED y FAILED solo devuelven estado. Recuperar rechazos definitivos y compensaciones corresponde a HU-WFL-002. Se conserva la correlacion original para los participantes y se usa SERVICE_TOKEN, nunca el JWT humano.'
+      description: 'ADMIN o INVENTORY propietaria. RUNNING continua la fase guardada: avance o compensacion tras caida. Conserva claves, correlacion y SERVICE_TOKEN. COMPLETED, COMPENSATED y FAILED solo devuelven estado. FAILED requiere compensate administrativo; timeout o conflicto de avance no se compensan a ciegas.'
+      requestBody: {required: false, content: {application/json: {schema: {type: object, additionalProperties: false, maxProperties: 0}}}}
+      responses: {'200': {$ref: '#/components/responses/Saga'}, default: {$ref: '#/components/responses/Error'}}
+  /api/v1/sagas/{id}/compensate:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: compensateReceptionSaga
+      description: 'Solo ADMIN: decision explicita sobre FAILED en fase de compensacion guardada. Reintenta acciones pendientes con claves previas. COMPENSATED es replay sin acciones. RUNNING, COMPLETED y FAILED historico sin fase conocida rechazan 409: requieren resolver resultados inciertos, nunca revertir stock activado.'
       requestBody: {required: false, content: {application/json: {schema: {type: object, additionalProperties: false, maxProperties: 0}}}}
       responses: {'200': {$ref: '#/components/responses/Saga'}, default: {$ref: '#/components/responses/Error'}}
 components:
@@ -50,6 +57,7 @@ components:
     Uuid: {type: string, format: uuid, pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'}
     NullableUuid: {anyOf: [{$ref: '#/components/schemas/Uuid'}, {type: 'null'}]}
     Step: {type: string, enum: [prepare-receipt, prepare-entry, confirm-receipt, activate-entry]}
+    UndoStep: {type: string, enum: [cancel-entry, void-receipt]}
     Reception:
       type: object
       additionalProperties: false
@@ -64,14 +72,15 @@ components:
     Saga:
       type: object
       additionalProperties: false
-      required: [id, createdBy, createdAt, status, completedSteps, failedStep, receiptId, entryId]
+      required: [id, createdBy, createdAt, status, completedSteps, compensatedSteps, failedStep, receiptId, entryId]
       properties:
         id: {$ref: '#/components/schemas/Uuid'}
         createdBy: {$ref: '#/components/schemas/Uuid'}
         createdAt: {type: string, format: date-time}
-        status: {type: string, enum: [RUNNING, COMPLETED, FAILED]}
+        status: {type: string, enum: [RUNNING, COMPLETED, FAILED, COMPENSATED]}
         completedSteps: {type: array, maxItems: 4, uniqueItems: true, items: {$ref: '#/components/schemas/Step'}}
-        failedStep: {anyOf: [{$ref: '#/components/schemas/Step'}, {type: 'null'}]}
+        compensatedSteps: {type: array, maxItems: 2, uniqueItems: true, items: {$ref: '#/components/schemas/UndoStep'}}
+        failedStep: {anyOf: [{$ref: '#/components/schemas/Step'}, {$ref: '#/components/schemas/UndoStep'}, {type: 'null'}]}
         receiptId: {$ref: '#/components/schemas/NullableUuid'}
         entryId: {$ref: '#/components/schemas/NullableUuid'}
     Error:

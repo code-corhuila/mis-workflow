@@ -37,7 +37,8 @@ class PostgresStore:
                         row["trace"], row["created_at"], row["status"], tuple(row["completed"]),
                         str(row["receipt_id"]) if row["receipt_id"] else None,
                         str(row["entry_id"]) if row["entry_id"] else None,
-                        row["failed_step"], row["failure_code"])
+                        row["failed_step"], row["failure_code"], row["compensating"], tuple(row["compensated"]),
+                        row["undo_failed_step"], row["undo_failure_code"])
         except (Failure, KeyError, TypeError, ValueError):
             raise Failure(503, "INVALID_SAGA_STATE") from None
 
@@ -71,10 +72,12 @@ class PostgresStore:
         with self.connection() as connection:
             result = connection.execute("""
                 UPDATE workflow.saga SET status=%s, completed=%s, receipt_id=%s, entry_id=%s,
-                    failed_step=%s, failure_code=%s, updated_at=clock_timestamp()
+                    failed_step=%s, failure_code=%s, compensating=%s, compensated=%s,
+                    undo_failed_step=%s, undo_failure_code=%s, updated_at=clock_timestamp()
                 WHERE id=%s
                 """, (saga.status, list(saga.completed), saga.receipt_id, saga.entry_id,
-                      saga.failed_step, saga.failure_code, saga.id))
+                      saga.failed_step, saga.failure_code, saga.compensating, list(saga.compensated),
+                      saga.undo_failed_step, saga.undo_failure_code, saga.id))
             if result.rowcount != 1:
                 raise Failure(404, "NOT_FOUND")
 
@@ -96,7 +99,7 @@ class PostgresStore:
 
     def health(self):
         with self.connection() as connection:
-            version = connection.execute("SELECT version FROM workflow.schema_version").fetchall()
+            version = connection.execute("SELECT max(version) AS version FROM workflow.schema_version").fetchall()
             connection.execute("SELECT id FROM workflow.saga LIMIT 0")
-            if version != [{"version": 1}]:
+            if version != [{"version": 2}]:
                 raise Failure(503, "WORKFLOW_SCHEMA_MISMATCH")

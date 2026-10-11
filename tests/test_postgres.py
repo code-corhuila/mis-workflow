@@ -34,6 +34,7 @@ class PostgresTests(unittest.TestCase):
         cls.sql = Path("db/001-sagas.sql").read_text(encoding="utf-8")
         assert cls.sql.startswith("\\set ON_ERROR_STOP on\n")
         cls.sql = cls.sql.split("\n", 1)[1]
+        cls.sql += "\n" + Path("db/002-compensation.sql").read_text(encoding="utf-8")
         with psycopg.connect(cls.admin_dsn, autocommit=True) as connection:
             connection.execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='workflow_app') THEN CREATE ROLE workflow_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT; END IF; END $$")
             connection.execute(cls.sql)

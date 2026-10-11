@@ -80,8 +80,16 @@ class Saga:
     entry_id: str | None = None
     failed_step: str | None = None
     failure_code: str | None = None
+    compensating: bool = False
+    compensated: tuple[str, ...] = ()
+    undo_failed_step: str | None = None
+    undo_failure_code: str | None = None
+
+    def undo_plan(self):
+        return ("cancel-entry", "void-receipt") if len(self.completed) >= 2 else ("void-receipt",) if self.completed else ()
 
     def resource(self):
         return {"id": self.id, "createdBy": self.actor, "createdAt": self.created_at.isoformat(),
-                "status": self.status, "completedSteps": list(self.completed), "failedStep": self.failed_step,
+                "status": self.status, "completedSteps": list(self.completed), "failedStep": self.undo_failed_step or self.failed_step,
+                "compensatedSteps": list(self.compensated),
                 "receiptId": self.receipt_id, "entryId": self.entry_id}

@@ -1,6 +1,6 @@
 # ADR-001 - Estado persistente de recepciones
 
-Fecha: 2026-10-11. Estado: adaptador y migracion implementados y probados en PostgreSQL desechable. Despliegue del servicio pendiente; no se atribuye aprobacion arquitectonica al docente.
+Fecha: 2026-10-11. Estado: esquema, migracion y servicio implementados y verificados en dev, con recuperacion y aislamiento de credenciales. No se atribuye aprobacion arquitectonica al docente; promocion formal pendiente.
 
 ## Contexto
 
@@ -32,4 +32,6 @@ Pruebas reales: migracion vacia y repetida con datos, diez creaciones concurrent
 
 ## Pendiente para integrar
 
-Cliente HTTP y verificacion de archivos JWT de servicio implementados en el avance siguiente de HU-WFL-001. Aun falta provisionar credenciales propias por ambiente, ejecutar migracion como trabajo de despliegue, emitir/renovar tokens operativamente y conectar servidor/Compose/gateway. No usar el DSN administrativo de pruebas en el servicio. Respaldo y recuperacion deben conservar tambien los documentos participantes; no se cierra HU-WFL-001 con estos avances.
+deploy/compose.yml separa la migracion/provision de rol (db/migrate.py) del servidor. La credencial administrativa no se entrega al servidor. New-WorkflowEnvironment genera password/subject propios por ambiente, y Set-WorkflowServiceToken permite emitir/renovar JWT fuera del contenedor conservando identidad. Composicion completa y gateway integrados; prueba real dev acredita persistencia, recibo confirmado, entrada activa, un movimiento, reinicio y reanudacion de fallo transitorio.
+
+QA/main solo tienen configuracion validada, no ejecucion ni promocion del workflow. Publicar componentes de dominio pendientes, validar QA y respaldar estado/documentos antes de promocion formal. La compensacion de fallos definitivos corresponde a HU-WFL-002; FAILED no se marca como compensacion exitosa.

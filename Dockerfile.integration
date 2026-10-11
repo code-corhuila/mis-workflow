@@ -6,5 +6,6 @@ RUN pip install --no-cache-dir --disable-pip-version-check -r tests/requirements
 COPY workflow workflow
 COPY docs docs
 COPY db db
+COPY deploy deploy
 COPY tests tests
 CMD ["python", "-m", "unittest", "discover", "-s", "tests", "-v"]

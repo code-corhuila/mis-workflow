@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: MediStock - Recepcion integrada
   version: 2.0.0
-  description: 'Contrato de HU-WFL-001. Servidor HTTP, nucleo, persistencia PostgreSQL y cliente de participantes implementados. Despliegue por ambiente, gateway y validacion con APIs reales pendientes.'
+  description: 'HU-WFL-001 integrada y verificada con APIs reales en dev: recepcion confirmada, entrada activa y un movimiento. QA/main requieren promocion y validacion; compensacion pertenece a HU-WFL-002.'
 servers: [{url: 'http://127.0.0.1:8088'}]
 security: [{bearerAuth: []}]
 paths:

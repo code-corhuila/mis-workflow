@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16.10-alpine
+    environment:
+      POSTGRES_DB: workflow_test
+      POSTGRES_HOST_AUTH_METHOD: trust
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d workflow_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  tests:
+    build:
+      context: ..
+      dockerfile: Dockerfile.integration
+    environment:
+      WORKFLOW_TEST_DSN: host=postgres dbname=workflow_test user=postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+networks:
+  default:
+    internal: true

@@ -32,7 +32,7 @@ ADMIN e INVENTORY inician; INVENTORY solo consulta/reanuda propias; SUPERVISOR c
 
 El alcance inicial es un proveedor, medicamento y lote por recepcion, sin lineas multiples. Respuestas contienen UUID, estado, pasos completados y failedStep; no credenciales ni detalle interno. El nucleo detiene fallos transitorios sin compensar a ciegas; un rechazo definitivo queda FAILED y no se reintenta automaticamente. Compensacion y recuperacion de fallos definitivos corresponden a HU-WFL-002, aun pendiente.
 
-Contrato en docs/openapi.yaml. El almacenamiento se propone en docs/ADR-001-saga-storage.md: esquema y usuario propios en PostgreSQL existente, sin nuevo motor ni escritura en datos de otros dominios. Sigue pendiente implementar y probar ese adaptador, las recepciones MongoDB de Proveedores, el cliente HTTP, identidad de servicio, servidor, Compose y rutas del gateway. Este avance no levanta un servicio ejecutable ni cierra la HU.
+Contrato en docs/openapi.yaml. El almacenamiento se registra en docs/ADR-001-saga-storage.md: esquema y usuario propios en PostgreSQL existente, sin nuevo motor ni escritura en datos de otros dominios. El adaptador PostgreSQL ya esta implementado; las recepciones MongoDB se implementaron localmente en Proveedores. Siguen pendientes despliegue, cliente HTTP, identidad de servicio, servidor, Compose y rutas de saga del gateway. Este avance no levanta un servicio ejecutable ni cierra la HU.
 
 ## Pruebas y publicacion
 
@@ -66,3 +66,23 @@ Comentario del PR:
 - Core and schema tests passed locally using doubles.
 - Real PostgreSQL persistence, participant HTTP calls and compensation are not verified by this PR.
 ```
+
+## Avance de persistencia HU-WFL-001
+
+Rama feat/hu-wfl-001-storage-dev desde develop. Adaptador PostgresStore, migracion propia db/001-sagas.sql y permisos minimos. La aplicacion no migra al arrancar; el trabajo de despliegue debe provisionar workflow_app con credencial fuera de Git y ejecutar el SQL como propietario. No almacena tokens ni claves RSA.
+
+Prueba aislada con Docker Desktop; no publica puertos ni toca dev/qa/main. El modo trust es exclusivo de esta red interna desechable, nunca un ejemplo de configuracion de ambientes reales. Ejecutar desde la raiz de mis-workflow:
+
+```powershell
+$project = "mis-wfl-storage-check-" + [guid]::NewGuid().ToString("N").Substring(0, 8)
+try {
+    docker compose -p $project -f tests/compose.storage.yml up --build --abort-on-container-exit --exit-code-from tests
+    if ($LASTEXITCODE -ne 0) { throw "Fallaron las pruebas de persistencia" }
+} finally {
+    docker compose -p $project -f tests/compose.storage.yml down -v
+}
+```
+
+La suite de integracion exige la base workflow_test y solo limpia sus tablas de prueba. Sin WORKFLOW_TEST_DSN las pruebas PostgreSQL se omiten explicitamente; CI ejecuta tambien Docker para que no baste con pruebas del nucleo. No demuestra todavia funcionamiento HTTP entre servicios ni reinicio del contenedor workflow.
+
+Publicacion: ver docs/HU-WFL-001-storage-publicacion.md. Los comandos anteriores pertenecen al PR historico del nucleo; no reutilizarlos para este avance.

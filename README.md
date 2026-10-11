@@ -32,7 +32,7 @@ ADMIN e INVENTORY inician; INVENTORY solo consulta/reanuda propias; SUPERVISOR c
 
 El alcance inicial es un proveedor, medicamento y lote por recepcion, sin lineas multiples. Respuestas contienen UUID, estado, pasos completados y failedStep; no credenciales ni detalle interno. El nucleo detiene fallos transitorios sin compensar a ciegas; un rechazo definitivo queda FAILED y no se reintenta automaticamente. Compensacion y recuperacion de fallos definitivos corresponden a HU-WFL-002, aun pendiente.
 
-Contrato en docs/openapi.yaml. El almacenamiento se registra en docs/ADR-001-saga-storage.md: esquema y usuario propios en PostgreSQL existente, sin nuevo motor ni escritura en datos de otros dominios. Servidor, adaptador PostgreSQL y cliente HTTP implementados; recepciones MongoDB disponibles localmente en Proveedores. Siguen pendientes despliegue por ambiente, provision y renovacion operativa de identidad de servicio, Compose y rutas de saga del gateway. Este avance no cierra la HU.
+Contrato en docs/openapi.yaml. El almacenamiento se registra en docs/ADR-001-saga-storage.md: esquema y usuario propios en PostgreSQL existente, sin nuevo motor ni escritura en datos de otros dominios. Servidor, participantes, migracion y despliegue integrados y verificados en dev. Falta publicar componentes de dominio pendientes, promover a QA y acreditar el cierre formal. HU-WFL-002 implementara compensacion; este avance no la incluye.
 
 ## Pruebas y publicacion
 
@@ -117,3 +117,22 @@ python -m uvicorn workflow.server:app --host 127.0.0.1 --port 8089 --no-access-l
 Contenedor no root: docker build -f deploy/Dockerfile -t mis-workflow-server-check . La imagen no contiene db/, tests/ ni credenciales; migraciones se ejecutan por despliegue, no por el servidor. No publicar su puerto directamente en la composicion final: el acceso sera por gateway.
 
 Pruebas: usar la red desechable del README. Incluyen Uvicorn real, JWT distintos humano/servicio, PostgreSQL real y reinicio del proceso. Participantes HTTP son controlados: no demuestra aun recepcion real ni stock de Inventario. Sin WORKFLOW_TEST_DSN se omiten tambien la prueba de runtime y las ocho de persistencia. Guia del PR actual: docs/HU-WFL-001-server-publicacion.md.
+
+## Operacion integrada
+
+Usar la composicion completa compose.workflow.yml de mis-infra-postgres; no iniciar por separado composiciones parciales. deploy/compose.yml separa workflow-db-migrate (credencial administrativa solo durante despliegue) de workflow (workflow_app, sin puertos, filesystem y credenciales en solo lectura, UID 10001). db/migrate.py provisiona un rol sin privilegios globales ni membresias, verifica credencial existente sin rotarla y aplica el SQL propio. No cambia esquemas ajenos ni ofrece rollback destructivo.
+
+Desde mis-infra-postgres, en PowerShell 7:
+
+```powershell
+.\scripts\Start-Workflow.ps1 -Environment dev
+.\scripts\Manage-Environment.ps1 -Environment dev -Action status -ComposeFile compose.workflow.yml
+.\scripts\Set-WorkflowServiceToken.ps1 -Environment dev
+.\tests\Test-Workflow.ps1 -VerifyRecovery -Python python
+```
+
+Start genera configuracion propia si falta, conserva password y subject existentes y renueva JWT con la clave de Seguridad. El operador debe poder leer esa clave, que nunca se copia ni monta en workflow. Renovacion manual, sin scheduler: token maximo una hora, renovar antes del vencimiento. Al vencer /health devuelve 503 y nuevas sagas quedan RUNNING sin actuar; renovar y usar resume, no cambiar subject. La carpeta montada por ambiente solo contiene public.pem/service.jwt; reemplazo atomico del JWT se ve sin reiniciar el contenedor.
+
+Test-Workflow crea datos sinteticos y, con VerifyRecovery, interrumpe/restaura solo Inventario dev; no ejecutar simultaneamente con otras pruebas o usuarios. Requiere dependencias de tests/requirements-contract.txt de mis-infra-postgres. Valida OpenAPI sobre respuestas reales, recibo CONFIRMED, entrada ACTIVE, stock, un movimiento, replay, reinicio, recuperacion y JWT renovado. Configuraciones QA/main comprobadas sin arrancar esos ambientes; sus seis combinaciones de identidad cruzada fueron rechazadas.
+
+Publicacion actual: docs/HU-WFL-001-integracion.md y ../mis-infra-postgres/docs/HU-WFL-001-integracion-publicacion.md. No versionar env/*.env ni secrets/. Cierre formal pendiente de publicacion de dominios, QA y promocion segun politica del curso.

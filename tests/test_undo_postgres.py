@@ -3,6 +3,7 @@ import importlib.util
 import os
 from pathlib import Path
 import unittest
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -83,14 +84,20 @@ class UndoPostgresTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         environment = {"PGHOST": options["host"], "PGDATABASE": database, "PGUSER": options["user"],
-                       "PGPASSWORD": "", "WORKFLOW_APP_PASSWORD": "synthetic-disposable-workflow-password"}
-        with patch.dict(os.environ, environment):
-            module.migrate()
-            store = PostgresStore(make_conninfo(dsn, user="workflow_app"))
-            before = store.get(identifier)
-            self.assertEqual("COMPLETED", before.status)
-            self.assertFalse(before.compensating)
-            self.assertEqual((), before.compensated)
-            module.migrate()
-            self.assertEqual(before, store.get(identifier))
-            store.health()
+                       "WORKFLOW_APP_PASSWORD": "synthetic-disposable-workflow-password"}
+        with TemporaryDirectory() as temporary, patch.dict(os.environ, environment):
+            secret = Path(temporary) / "admin-password"
+            secret.write_text("synthetic-admin-password", encoding="utf-8")
+            with patch.dict(os.environ, {"PGPASSWORD_FILE": str(secret)}):
+                self._verify_upgrade(module, dsn, identifier)
+
+    def _verify_upgrade(self, module, dsn, identifier):
+        module.migrate()
+        store = PostgresStore(make_conninfo(dsn, user="workflow_app"))
+        before = store.get(identifier)
+        self.assertEqual("COMPLETED", before.status)
+        self.assertFalse(before.compensating)
+        self.assertEqual((), before.compensated)
+        module.migrate()
+        self.assertEqual(before, store.get(identifier))
+        store.health()

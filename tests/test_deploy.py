@@ -25,5 +25,11 @@ class DeploymentTests(unittest.TestCase):
         migration = model["services"]["workflow-db-migrate"]
         self.assertEqual("no", migration["restart"])
         self.assertNotIn("ports", migration)
-        self.assertNotIn("volumes", migration)
+        self.assertNotIn("PGPASSWORD", migration["environment"])
+        self.assertEqual("/run/migration/admin-password", migration["environment"]["PGPASSWORD_FILE"])
+        mount, = migration["volumes"]
+        self.assertEqual("/run/migration/admin-password", mount["target"])
+        self.assertTrue(mount["read_only"])
+        self.assertIs(False, mount["bind"]["create_host_path"])
+        self.assertTrue(migration["read_only"])
         self.assertEqual("service_completed_successfully", model["services"]["workflow"]["depends_on"]["workflow-db-migrate"]["condition"])

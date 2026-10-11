@@ -12,13 +12,20 @@ def safe_role(role):
     return role.get("rolcanlogin") is True and all(role.get(name) is False for name in forbidden)
 
 
+def admin_password():
+    value = Path(os.environ["PGPASSWORD_FILE"]).read_text(encoding="utf-8").rstrip("\r\n")
+    if not value or len(value) > 1024 or "\n" in value or "\r" in value or "\x00" in value:
+        raise ValueError("Invalid administrator password file")
+    return value
+
+
 def migrate():
     password = os.environ["WORKFLOW_APP_PASSWORD"]
     if not password:
         raise ValueError("Explicit workflow password required")
     options = {"host": os.environ["PGHOST"], "dbname": os.environ["PGDATABASE"],
                "connect_timeout": 5, "options": "-c statement_timeout=10000 -c lock_timeout=5000"}
-    with psycopg.connect(**options, user=os.environ["PGUSER"], password=os.environ["PGPASSWORD"], autocommit=True) as admin:
+    with psycopg.connect(**options, user=os.environ["PGUSER"], password=admin_password(), autocommit=True) as admin:
         with admin.transaction():
             admin.execute("SELECT pg_advisory_xact_lock(hashtextextended('mis-workflow-role',0))")
             with admin.cursor(row_factory=dict_row) as cursor:

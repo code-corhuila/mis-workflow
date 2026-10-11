@@ -46,12 +46,23 @@ class UndoPostgresTests(unittest.TestCase):
             self.assertFalse(created)
             self.assertTrue(saved.compensating)
             self.assertEqual(position - 1, len(saved.compensated))
+            repeated = ("cancel-entry", "void-receipt")[position - 1]
+            self.assertEqual(1, participants.effects.count(repeated))
+            self.assertNotIn(repeated, saved.compensated)
+            before_recovery = len(participants.calls)
             recovered = Runner(PostgresStore(self.dsn), participants, lambda: "service-renewed").resume(actor, ["INVENTORY"], saved.id)
             self.assertEqual("COMPENSATED", recovered.status)
             self.assertEqual(recovered, PostgresStore(self.dsn).get(saved.id))
             self.assertEqual(1, participants.effects.count("cancel-entry"))
             self.assertEqual(1, participants.effects.count("void-receipt"))
             self.assertNotIn("activate-entry", participants.effects)
+            retries = [call for call in participants.calls if call[0] == repeated]
+            self.assertEqual(2, len(retries))
+            self.assertEqual((saved.id + ":" + repeated, "trace-undo-pg"), (retries[0][1], retries[0][3]))
+            self.assertEqual((retries[0][1], retries[0][3]), (retries[1][1], retries[1][3]))
+            self.assertEqual(("service-first", "service-renewed"), (retries[0][2], retries[1][2]))
+            self.assertTrue(all(call[0] in ("cancel-entry", "void-receipt")
+                                for call in participants.calls[before_recovery:]))
 
     def test_upgrade_v1_retains_completed_saga_and_repeated_upgrade(self):
         options = conninfo_to_dict(os.environ["WORKFLOW_TEST_DSN"])

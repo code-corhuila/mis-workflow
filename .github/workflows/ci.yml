@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install contract test dependencies
-        run: python -m pip install --disable-pip-version-check -r tests/requirements.txt
+        run: python -m pip install --disable-pip-version-check -r tests/requirements.txt -r workflow/requirements.txt
       - name: Test independent orchestration core
         run: python -m unittest discover -s tests -v
       - name: Test PostgreSQL persistence in an isolated network

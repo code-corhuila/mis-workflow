@@ -1,0 +1,85 @@
+openapi: 3.1.0
+info:
+  title: MediStock - Recepcion integrada
+  version: 2.0.0
+  description: 'Contrato propuesto de HU-WFL-001. Este avance implementa el nucleo, no el servidor HTTP ni las recepciones participantes.'
+servers: [{url: 'http://127.0.0.1:8088'}]
+security: [{bearerAuth: []}]
+paths:
+  /api/v1/sagas/receive-supplies:
+    post:
+      operationId: startReception
+      description: 'ADMIN o INVENTORY. Una recepcion, proveedor, medicamento y lote por saga. Preparar recibo, preparar entrada, confirmar recibo y activar entrada en ese orden. Replay solo consulta la misma saga, sin reejecutar pasos. La fecha se valida estructuralmente; el vencimiento y las referencias los validan los participantes. Un rechazo de negocio queda registrado como FAILED; no equivale a compensacion.'
+      parameters: [{name: Idempotency-Key, in: header, required: true, schema: {type: string, pattern: '^[A-Za-z0-9._:-]{8,128}$'}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Reception'}}}}
+      responses:
+        '201':
+          description: Saga creada, con estado vigente despues de ejecutar su avance.
+          headers: {Location: {schema: {type: string}, description: '/api/v1/sagas/{id}'}, X-Correlation-Id: {schema: {type: string}}}
+          content: {application/json: {schema: {$ref: '#/components/schemas/Saga'}}}
+        '200': {$ref: '#/components/responses/Saga'}
+        default: {$ref: '#/components/responses/Error'}
+  /api/v1/sagas/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      operationId: findReceptionSaga
+      description: 'ADMIN y SUPERVISOR consultan todas; INVENTORY solo propias. CONSULTATION no accede. No ejecuta pasos.'
+      responses: {'200': {$ref: '#/components/responses/Saga'}, default: {$ref: '#/components/responses/Error'}}
+  /api/v1/sagas/{id}/resume:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    post:
+      operationId: resumeReceptionSaga
+      description: 'ADMIN o INVENTORY propietaria. RUNNING continua desde el primer paso no guardado con la misma clave derivada; nunca compensa por timeout. COMPLETED y FAILED solo devuelven estado. Recuperar rechazos definitivos y compensaciones corresponde a HU-WFL-002. Se conserva la correlacion original para los participantes y se usa SERVICE_TOKEN, nunca el JWT humano.'
+      requestBody: {required: false, content: {application/json: {schema: {type: object, additionalProperties: false, maxProperties: 0}}}}
+      responses: {'200': {$ref: '#/components/responses/Saga'}, default: {$ref: '#/components/responses/Error'}}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT RS256}
+  parameters:
+    Id: {name: id, in: path, required: true, schema: {$ref: '#/components/schemas/Uuid'}}
+  responses:
+    Saga:
+      description: Estado guardado; no incluye detalle interno ni credenciales.
+      headers: {X-Correlation-Id: {schema: {type: string}}}
+      content: {application/json: {schema: {$ref: '#/components/schemas/Saga'}}}
+    Error:
+      description: '400 VALIDATION_ERROR, 401 UNAUTHORIZED, 403 FORBIDDEN, 404 NOT_FOUND, 409 IDEMPOTENCY_CONFLICT/SAGA_BUSY, 413 PAYLOAD_TOO_LARGE, 429 TOO_MANY_REQUESTS, 503 SERVICE_UNAVAILABLE/INVALID_SAGA_STATE; otros errores conservan el sobre comun. El adaptador HTTP debe validar JWT y limitar cuerpo/tiempos.'
+      headers: {X-Correlation-Id: {schema: {type: string}}}
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  schemas:
+    Uuid: {type: string, format: uuid, pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'}
+    NullableUuid: {anyOf: [{$ref: '#/components/schemas/Uuid'}, {type: 'null'}]}
+    Step: {type: string, enum: [prepare-receipt, prepare-entry, confirm-receipt, activate-entry]}
+    Reception:
+      type: object
+      additionalProperties: false
+      required: [supplierId, medicationId, reference, lotNumber, expiresOn, quantity]
+      properties:
+        supplierId: {$ref: '#/components/schemas/Uuid'}
+        medicationId: {$ref: '#/components/schemas/Uuid'}
+        reference: {type: string, description: 'Recortada, ASCII alfanumerico/guion de 1 a 40 caracteres y normalizada a mayusculas.'}
+        lotNumber: {type: string, description: 'Recortado, ASCII alfanumerico/guion de 1 a 40 caracteres y normalizado a mayusculas.'}
+        expiresOn: {type: string, format: date, pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'}
+        quantity: {type: integer, minimum: 1, maximum: 1000000}
+    Saga:
+      type: object
+      additionalProperties: false
+      required: [id, createdBy, createdAt, status, completedSteps, failedStep, receiptId, entryId]
+      properties:
+        id: {$ref: '#/components/schemas/Uuid'}
+        createdBy: {$ref: '#/components/schemas/Uuid'}
+        createdAt: {type: string, format: date-time}
+        status: {type: string, enum: [RUNNING, COMPLETED, FAILED]}
+        completedSteps: {type: array, maxItems: 4, uniqueItems: true, items: {$ref: '#/components/schemas/Step'}}
+        failedStep: {anyOf: [{$ref: '#/components/schemas/Step'}, {type: 'null'}]}
+        receiptId: {$ref: '#/components/schemas/NullableUuid'}
+        entryId: {$ref: '#/components/schemas/NullableUuid'}
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error, message, traceId]
+      properties:
+        error: {type: string}
+        message: {type: string}
+        traceId: {type: string}
+        details: {type: array, items: {type: object, required: [field, message], properties: {field: {type: string}, message: {type: string}}}}

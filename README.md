@@ -32,12 +32,12 @@ ADMIN e INVENTORY inician; INVENTORY solo consulta/reanuda propias; SUPERVISOR c
 
 El alcance inicial es un proveedor, medicamento y lote por recepcion, sin lineas multiples. Respuestas contienen UUID, estado, pasos completados y failedStep; no credenciales ni detalle interno. El nucleo detiene fallos transitorios sin compensar a ciegas; un rechazo definitivo queda FAILED y no se reintenta automaticamente. Compensacion y recuperacion de fallos definitivos corresponden a HU-WFL-002, aun pendiente.
 
-Contrato en docs/openapi.yaml. El almacenamiento se registra en docs/ADR-001-saga-storage.md: esquema y usuario propios en PostgreSQL existente, sin nuevo motor ni escritura en datos de otros dominios. El adaptador PostgreSQL ya esta implementado; las recepciones MongoDB se implementaron localmente en Proveedores. Siguen pendientes despliegue, cliente HTTP, identidad de servicio, servidor, Compose y rutas de saga del gateway. Este avance no levanta un servicio ejecutable ni cierra la HU.
+Contrato en docs/openapi.yaml. El almacenamiento se registra en docs/ADR-001-saga-storage.md: esquema y usuario propios en PostgreSQL existente, sin nuevo motor ni escritura en datos de otros dominios. El adaptador PostgreSQL y el cliente HTTP ya estan implementados; las recepciones MongoDB se implementaron localmente en Proveedores. Siguen pendientes despliegue, provision y renovacion operativa de identidad de servicio, servidor, Compose y rutas de saga del gateway. Este avance no levanta un servicio ejecutable ni cierra la HU.
 
 ## Pruebas y publicacion
 
 ```powershell
-python -m pip install -r tests/requirements.txt
+python -m pip install -r tests/requirements.txt -r workflow/requirements.txt
 python -m unittest discover -s tests -v
 docker build -f Dockerfile.test -t mis-workflow-core-check .
 ```
@@ -86,3 +86,15 @@ try {
 La suite de integracion exige la base workflow_test y solo limpia sus tablas de prueba. Sin WORKFLOW_TEST_DSN las pruebas PostgreSQL se omiten explicitamente; CI ejecuta tambien Docker para que no baste con pruebas del nucleo. No demuestra todavia funcionamiento HTTP entre servicios ni reinicio del contenedor workflow.
 
 Publicacion: ver docs/HU-WFL-001-storage-publicacion.md. Los comandos anteriores pertenecen al PR historico del nucleo; no reutilizarlos para este avance.
+
+## Cliente HTTP e identidad de servicio
+
+workflow/participants.py implementa los cuatro pasos usando origenes configurados de Proveedores e Inventario. El payload de recepcion incluye workflowId e initiatedBy; la entrada solo envia los cinco campos de su contrato. Confirmar y activar usan los UUID guardados. Nunca copia el JWT humano: Runner suministra una credencial de servicio separada.
+
+Cada llamada conserva Idempotency-Key y correlacion originales. Timeout de socket predeterminado 1.5 segundos, configurable hasta 2; no es un limite absoluto de tiempo de pared ante respuestas lentas. Maximo dos intentos, jitter entre 50 y 150 ms solo por red, 429 o 5xx. Un timeout no demuestra ausencia de efecto: se reutiliza la intencion. Los 401/403 requieren renovar/revisar identidad y reanudar explicitamente; otros 4xx quedan como rechazo definitivo. Respuestas invalidas y redirecciones quedan inciertas, sin seguir destinos ni reintentarlos automaticamente. Se limita el cuerpo de respuesta a 64 KiB y no se almacenan errores remotos.
+
+workflow/service_identity.py lee en cada paso un archivo SERVICE_TOKEN y verifica con una clave publica RSA, nunca privada: RS256, kid explicito, issuer mis-security, audience mis-api, service mis-workflow, rol exclusivo INVENTORY y subject estable por ambiente. Rechaza expiracion, vigencia mayor de una hora o menos de cinco segundos restantes. No emite tokens ni los renueva solo: un proceso autorizado externo debe reemplazar el archivo atomica y oportunamente, conservando subject. Montar el directorio de credenciales en solo lectura permite ver el reemplazo; un bind del archivo individual puede conservar el inode anterior. Cambiar subject rompe el alcance actor/clave de los participantes y no constituye renovacion valida. Cambiar clave/kid requiere actualizar configuracion y recrear el proveedor.
+
+No versionar service.jwt ni claves. Ubicarlos bajo secrets/ ignorado por Git; el montaje y el emisor por ambiente se integraran en el siguiente avance. Las pruebas generan claves sinteticas en carpetas temporales y usan servidores HTTP controlados, no datos reales.
+
+Guia del PR actual: docs/HU-WFL-001-http-publicacion.md. La suite Docker aislada verifica tambien persistencia; la prueba sin PostgreSQL omite sus ocho casos de forma explicita.

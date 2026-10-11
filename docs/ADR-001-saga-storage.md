@@ -32,4 +32,4 @@ Pruebas reales: migracion vacia y repetida con datos, diez creaciones concurrent
 
 ## Pendiente para integrar
 
-Provisionar credencial propia por ambiente, ejecutar migracion como trabajo de despliegue, implementar cliente HTTP e identidad de servicio renovable y conectar servidor/Compose/gateway. No usar el DSN administrativo de pruebas en el servicio. Respaldo y recuperacion deben conservar tambien los documentos participantes; no se cierra HU-WFL-001 con este avance.
+Cliente HTTP y verificacion de archivos JWT de servicio implementados en el avance siguiente de HU-WFL-001. Aun falta provisionar credenciales propias por ambiente, ejecutar migracion como trabajo de despliegue, emitir/renovar tokens operativamente y conectar servidor/Compose/gateway. No usar el DSN administrativo de pruebas en el servicio. Respaldo y recuperacion deben conservar tambien los documentos participantes; no se cierra HU-WFL-001 con estos avances.

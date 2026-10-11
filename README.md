@@ -139,6 +139,10 @@ Publicacion actual: docs/HU-WFL-001-integracion.md y ../mis-infra-postgres/docs/
 
 ## Compensacion - HU-WFL-002
 
+Operacion del migrador: PGPASSWORD_FILE es obligatorio; no hay fallback a PGPASSWORD.
+Start-Workflow prepara el archivo administrativo por ambiente mediante infraestructura.
+El bind del job es readonly y no se entrega a la API. Ver [ADR-003](docs/ADR-003-migration-secret.md).
+
 Ante rechazo definitivo se guarda fase de compensacion antes de ejecutar RPC. Orden por recurso preparado: cancel-entry, luego void-receipt (o solo void si no hubo entrada). Preparacion/confirmacion del recibo comparten una anulacion. Inventario debe aceptar cancelacion antes de anular; una entrada ACTIVE detiene la compensacion sin revertir stock ni recibo confirmado. No borrar documentos ni movimientos.
 
 Cada accion usa sagaId:accion y SERVICE_TOKEN estable; progreso y errores privados se guardan en esquema v2 con 002-compensation.sql, sin editar 001-sagas.sql. Una caida en fase RUNNING se reanuda sin pasos de avance. Un fallo de compensacion queda FAILED: resume solo consulta; POST /api/v1/sagas/{id}/compensate requiere ADMIN y {} o cuerpo ausente para reintentar acciones pendientes. COMPENSATED es replay sin efectos; COMPLETED, RUNNING e historicos FAILED sin fase conocida rechazan 409 y requieren reconciliacion, nunca compensar resultados inciertos.

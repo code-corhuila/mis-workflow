@@ -2,6 +2,7 @@ import importlib.util
 import os
 from pathlib import Path
 import unittest
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import psycopg
@@ -15,8 +16,12 @@ class MigrateTests(unittest.TestCase):
         options = conninfo_to_dict(os.environ["WORKFLOW_TEST_DSN"])
         if options.get("dbname") != "workflow_test":
             raise RuntimeError("Migration tests require disposable workflow_test")
+        temporary = TemporaryDirectory()
+        cls.addClassCleanup(temporary.cleanup)
+        secret = Path(temporary.name) / "admin-password"
+        secret.write_text("synthetic-admin-password", encoding="utf-8")
         cls.environment = {"PGHOST": options["host"], "PGDATABASE": "workflow_test", "PGUSER": options["user"],
-                           "PGPASSWORD": "", "WORKFLOW_APP_PASSWORD": "synthetic-disposable-workflow-password"}
+                           "PGPASSWORD_FILE": str(secret), "WORKFLOW_APP_PASSWORD": "synthetic-disposable-workflow-password"}
         spec = importlib.util.spec_from_file_location("workflow_migration_test", Path("db/migrate.py"))
         cls.module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.module)

@@ -7,8 +7,17 @@ services:
       PGHOST: postgres
       PGDATABASE: ${PG_DATABASE:?PG_DATABASE required}
       PGUSER: ${PG_ADMIN_USER:?PG_ADMIN_USER required}
-      PGPASSWORD: ${PG_ADMIN_PASSWORD:?PG_ADMIN_PASSWORD required}
+      PGPASSWORD_FILE: /run/migration/admin-password
       WORKFLOW_APP_PASSWORD: ${WORKFLOW_APP_PASSWORD:?WORKFLOW_APP_PASSWORD required}
+    volumes:
+      - type: bind
+        source: ${WORKFLOW_ADMIN_PASSWORD_FILE:?WORKFLOW_ADMIN_PASSWORD_FILE required}
+        target: /run/migration/admin-password
+        read_only: true
+        bind: {create_host_path: false}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     depends_on:
       postgres:
         condition: service_healthy
